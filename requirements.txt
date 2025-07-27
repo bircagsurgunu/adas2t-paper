@@ -1,0 +1,26 @@
+# requirements.txt
+
+# NOTE: PyTorch and its related libraries should be installed first using the
+# specific command with the correct CUDA version for your system.
+# e.g., pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
+
+
+datasets==3.6.0
+pandas
+matplotlib
+evaluate
+datasets[audio]
+transformers[sentencepiece]
+nemo_toolkit[all]
+
+# --- ADAS2T Meta-Learner Dependencies ---
+xgboost
+scikit-learn
+librosa
+scipy
+praat-parselmouth
+webrtcvad-wheels
+python-speech-features
+jiwer
+joblib
+tqdm # Explicitly add for progress bars during training
