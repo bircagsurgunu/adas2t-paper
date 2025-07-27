@@ -51,7 +51,7 @@ ADAS2T_ALGORITHMS_PATH = "adas2t_algorithms.pkl"
 # The pool of models that the ADAS2T handler will load and choose from at runtime.
 # This MUST match the `algorithm_pool_models` list in `train_metaleaner.py`.
 ADAS2T_ALGORITHM_POOL = [
-    "openai/whisper-large-v3",
+    "facebook/hubert-large-ls960-ft",
     "facebook/wav2vec2-base-960h",
     "nvidia/parakeet-tdt-0.6b-v2",
 ]

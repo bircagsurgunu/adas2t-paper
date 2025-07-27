@@ -23,4 +23,4 @@ webrtcvad-wheels
 python-speech-features
 jiwer
 joblib
-tqdm # Explicitly add for progress bars during training
+tqdm
