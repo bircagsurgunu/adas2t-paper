@@ -127,6 +127,11 @@ class ADAS2THandler(ASRModelHandler):
         self.feature_extractor = None
         self.s2t_pool = None
 
+    def _algo_one_hot(self, idx: int) -> np.ndarray:
+        v = np.zeros(self.num_algorithms, dtype=np.float32)
+        v[idx] = 1.0
+        return v
+
     def load_model(self):
         """Loads the XGBoost model, scaler, algorithm list, and the algorithm pool."""
         print(f"Loading ADAS2T meta-learning system...")
@@ -142,6 +147,7 @@ class ADAS2THandler(ASRModelHandler):
         self.model.load_model(config.ADAS2T_MODEL_PATH)
         self.scaler = joblib.load(config.ADAS2T_SCALER_PATH)
         self.algorithm_names = joblib.load(config.ADAS2T_ALGORITHMS_PATH)
+        self.num_algorithms = len(self.algorithm_names)
         print("  - XGBoost model, scaler, and algorithm list loaded.")
 
         # 3. Initialize the feature extractor
@@ -153,26 +159,28 @@ class ADAS2THandler(ASRModelHandler):
         print("ADAS2T meta-learning system loaded successfully.")
 
     def transcribe(self, audio_array):
-        """
-        Uses the meta-learner to select and run the best ASR model for the input.
-        """
-        # 1. Extract features from the audio
-        features = self.feature_extractor.extract_all_features(audio_array).reshape(1, -1)
-        
-        # 2. Scale the features
-        scaled_features = self.scaler.transform(features)
-        
-        # 3. Predict the best algorithm using the XGBoost model
-        dmatrix = xgb.DMatrix(scaled_features)
-        # The model predicts WER; we want the algorithm with the lowest predicted WER.
-        predicted_wers = self.model.predict(dmatrix)
-        best_algo_index = np.argmin(predicted_wers)
-        best_algo_name = self.algorithm_names[best_algo_index]
-        logger.debug(f"ADAS2T selected algorithm: {best_algo_name}")
+        # 1. acoustic features
+        base_feats = self.feature_extractor.extract_all_features(audio_array)
 
-        # 4. Transcribe using the selected algorithm from the pool
-        return self.s2t_pool.transcribe_with_algorithm(audio_array, best_algo_name)
+        # 2. build one row per algorithm  →  shape = (K , D+K)
+        feature_rows = [
+            np.concatenate([base_feats, self._algo_one_hot(k)])
+            for k in range(self.num_algorithms)
+        ]
+        feature_rows = np.asarray(feature_rows, dtype=np.float32)
 
+        # 3. scale exactly like during training
+        feature_rows = self.scaler.transform(feature_rows)
+
+        # 4. predict expected WER for every algorithm
+        dmat   = xgb.DMatrix(feature_rows)
+        preds  = self.model.predict(dmat)          # length K
+        best_k = int(np.argmin(preds))
+        best_algo_name = self.algorithm_names[best_k]
+
+        # 5. run the chosen ASR system
+        return self.s2t_pool.transcribe_with_algorithm(audio_array,
+                                                       best_algo_name)
 
 # Factory function to get the correct handler
 def get_model_handler(model_name: str, device: str, torch_dtype) -> ASRModelHandler:

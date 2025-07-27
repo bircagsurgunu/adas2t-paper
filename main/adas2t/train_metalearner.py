@@ -59,6 +59,9 @@ def main():
         default="adas2t_algorithms.pkl",
         help="Path to save the list of algorithm names."
     )
+    parser.add_argument("--xgb_max_depth",  type=int, default=10)
+    parser.add_argument("--xgb_num_trees",  type=int, default=2000)
+    parser.add_argument("--xgb_eta",        type=float, default=0.05)
     args = parser.parse_args()
 
     print("--- Starting ADAS2T Meta-Learner Training ---")
@@ -85,6 +88,11 @@ def main():
         'model_path': args.model_path,
         'scaler_path': args.scaler_path,
         'algorithms_path': args.algorithms_path,
+        "xgb_params": {
+            "max_depth" : args.xgb_max_depth,
+            "num_boost" : args.xgb_num_trees,
+            "eta"       : args.xgb_eta,
+        }
     }
 
     print(f"Using device: {training_config['device']}")

@@ -8,7 +8,7 @@ import torch
 MODELS_TO_BENCHMARK = [
     "facebook/wav2vec2-base-960h",
     "facebook/hubert-large-ls960-ft",
-    "openai/whisper-large-v3",
+    #"openai/whisper-large-v3",
     "nvidia/parakeet-tdt-0.6b-v2",
     "adas2t-meta-learner", # Add the meta-learner here
 ]

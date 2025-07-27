@@ -134,20 +134,33 @@ class AudioFeatureExtractor:
         features = []
         try:
             frame_energy = librosa.feature.rms(y=audio)[0]
-            snr = 10 * np.log10(np.mean(frame_energy) / max(np.percentile(frame_energy, 10), 1e-10))
+            snr = 10 * np.log10(np.mean(frame_energy) /
+                                max(np.percentile(frame_energy, 10), 1e-10))
             features.append(snr)
-        except Exception: features.append(0.0)
+        except Exception:
+            features.append(0.0)
 
         zcr = librosa.feature.zero_crossing_rate(audio)[0]
         features.extend([np.mean(zcr), np.std(zcr)])
 
         try:
-            spectral_centroids = librosa.feature.spectral_centroid(y=audio, sr=self.sample_rate)[0]
-            features.extend([np.mean(spectral_centroids), np.std(spectral_centroids)])
-            stft = np.abs(librosa.stft(audio))**2
-            spec_entropy = [entropy(frame / np.sum(frame)) for frame in stft.T if np.sum(frame) > 0]
-            features.extend([np.mean(spec_entropy), np.std(spec_entropy)] if spec_entropy else [0.0, 0.0])
-        except Exception: features.extend([0.0] * 4)
+            spectral_centroid = librosa.feature.spectral_centroid(y=audio, sr=self.sample_rate)[0]
+            features.extend([np.mean(spectral_centroid), np.std(spectral_centroid)])
 
-        features.append(len(audio) / self.sample_rate) # duration
+            spectral_bw = librosa.feature.spectral_bandwidth(y=audio, sr=self.sample_rate)[0]
+            features.extend([np.mean(spectral_bw), np.std(spectral_bw)])
+
+            rolloff = librosa.feature.spectral_rolloff(y=audio, sr=self.sample_rate)[0]
+            features.append(np.mean(rolloff))
+            
+            stft = np.abs(librosa.stft(audio)) ** 2
+            spec_entropy = [entropy(frame / np.sum(frame))
+                            for frame in stft.T if np.sum(frame) > 0]
+            features.extend([np.mean(spec_entropy), np.std(spec_entropy)]
+                            if spec_entropy else [0.0, 0.0])
+        except Exception:
+            features.extend([0.0] * 7)
+
+        features.append(len(audio) / self.sample_rate)
+
         return np.array(features)

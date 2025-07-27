@@ -155,21 +155,22 @@ class ADAS2TTrainer:
 
         logger.info("Training XGBoost …")
         params = dict(
-            objective="reg:squarederror",
-            eval_metric="rmse",
-            max_depth=6,
-            eta=0.1,
-            subsample=0.9,
-            colsample_bytree=0.8,
-            seed=42,
+            objective     = "reg:squarederror",
+            eval_metric   = "rmse",
+            max_depth     = self.cfg["xgb_params"]["max_depth"],
+            eta           = self.cfg["xgb_params"]["eta"],
+            subsample     = 0.9,
+            colsample_bytree = 0.8,
+            tree_method   = "gpu_hist" if "cuda" in self.device else "hist",
+            seed          = 42,
         )
         self.model = xgb.train(
             params,
             dtrain,
-            num_boost_round=600,
-            evals=[(dtrain, "train"), (dvalid, "valid")],
-            early_stopping_rounds=40,
-            verbose_eval=50,
+            num_boost_round = self.cfg["xgb_params"]["num_boost"],
+            evals           = [(dtrain, "train"), (dvalid, "valid")],
+            early_stopping_rounds = 100,
+            verbose_eval         = 100,
         )
 
         # --------------------------------------------------------------
