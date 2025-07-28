@@ -7,6 +7,7 @@ import os
 import shutil  # Import shutil for directory operations
 
 from main.adas2t.trainer import ADAS2TTrainer
+from main.adas2t.models import MetaLearnerMLP, MetaLearnerTransformer
 
 # --- Configuration for Training ---
 
@@ -36,7 +37,7 @@ def main():
         "--learner_type",
         type=str,
         default="xgboost",
-        choices=["xgboost", "mlp"],
+        choices=["xgboost", "mlp", "transformer", "ast"],
         help="Type of meta-learner model to train."
     )
     parser.add_argument(
@@ -81,6 +82,10 @@ def main():
         action='store_true',
         help="If set, deletes the cache directory before starting, forcing data regeneration."
     )
+    parser.add_argument("--transformer_d_model", type=int, default=128, help="Embedding dimension for Transformer.")
+    parser.add_argument("--transformer_nhead", type=int, default=8, help="Number of attention heads for Transformer.")
+    parser.add_argument("--transformer_num_layers", type=int, default=4, help="Number of layers for Transformer Encoder.")
+    parser.add_argument("--transformer_lr", type=float, default=1e-4, help="Learning rate for Transformer optimizer.")
 
     # --- XGBoost Specific Arguments ---
     parser.add_argument("--xgb_max_depth", type=int, default=10, help="Max depth for XGBoost trees.")
@@ -105,8 +110,15 @@ def main():
         type=float,
          default=0.0,
          help="L2 weight-decay value (passed to the Adam optimizer).",)
-    args = parser.parse_args()
 
+    parser.add_argument("--ast_epochs",      type=int,   default=5)
+    parser.add_argument("--ast_lr",          type=float, default=1e-4)
+    parser.add_argument("--ast_batch_size",  type=int,   default=8)
+    parser.add_argument("--ast_freeze_backbone", action="store_true",
+                        help="If passed, the AST backbone stays frozen.")
+    parser.add_argument("--ast_pretrained_name",
+                        default="MIT/ast-finetuned-audioset-10-10-0.4593")
+    args = parser.parse_args()
     # Handle cache clearing
     if args.clear_cache and os.path.exists(args.cache_dir):
         logging.warning(f"Clearing cache directory: {args.cache_dir}")
@@ -153,7 +165,27 @@ def main():
             "dropout": args.mlp_dropout,
             "early_stop_patience": args.early_stop_patience,
             "weight_decay": args.mlp_weight_decay,
-        }
+        },
+        "transformer_params": {
+            "d_model": args.transformer_d_model,
+            "nhead": args.transformer_nhead,
+            "num_encoder_layers": args.transformer_num_layers,
+            "lr": args.transformer_lr,
+            # Re-use some mlp params for consistency
+            "epochs": args.mlp_epochs,
+            "batch_size": args.mlp_batch_size,
+            "early_stop_patience": args.early_stop_patience,
+            "weight_decay": args.mlp_weight_decay,
+            "transformer_dropout": args.mlp_dropout,
+        },
+        "ast_params": {
+        "epochs":           args.ast_epochs,
+        "lr":               args.ast_lr,
+        "batch_size":       args.ast_batch_size,
+        "freeze_backbone":  args.ast_freeze_backbone,
+        "pretrained_name":  args.ast_pretrained_name,
+    },
+
     }
 
     print(f"Using device: {training_config['device']}")

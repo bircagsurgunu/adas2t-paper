@@ -34,7 +34,6 @@ class AudioFeatureExtractor:
         self.device = device
         self.vad = webrtcvad.Vad(3)  # Aggressiveness level 3
         self._load_embedding_models()
-        self.expected_dim = None
         
     def _load_embedding_models(self):
         """Load pre-trained models for neural embeddings"""
@@ -52,35 +51,35 @@ class AudioFeatureExtractor:
             self.wav2vec2_processor, self.wav2vec2_model = None, None
             self.hubert_model = None
     
-    def extract_all_features(self, audio: np.ndarray) -> np.ndarray:
-        """Extracts and concatenates all feature types."""
-        # MFCC features (78 features)
-        mfcc_features = self._extract_mfcc_features(audio)
-        # Prosodic features (6 features)
-        prosodic_features = self._extract_prosodic_features(audio)
-        # Neural embeddings (512 + 768 + 768 = 2048 features)
-        neural_features = self._extract_neural_embeddings(audio)
-        # Signal complexity features (~10 features)
-        signal_features = self._extract_signal_complexity_features(audio)
+    def extract_all_features(self, audio: np.ndarray) -> dict[str, np.ndarray]:
+        """
+        Extracts and concatenates all feature types into a dictionary of named feature groups.
+        """
+        # --- MODIFIED ---
+        # The output is now a dictionary of feature vectors
+        features = {}
+
+        # MFCC features
+        features['mfcc'] = self._extract_mfcc_features(audio)
         
-        final_features = np.concatenate(
-            [mfcc_features, prosodic_features, neural_features, signal_features]
-        )
-        final_features = np.nan_to_num(final_features, nan=0.0, posinf=0.0, neginf=0.0)
+        # Prosodic features
+        features['prosodic'] = self._extract_prosodic_features(audio)
+        
+        # Neural embeddings (now returns a dict)
+        neural_features_dict = self._extract_neural_embeddings(audio)
+        features.update(neural_features_dict)
+        
+        # Signal complexity features
+        features['signal'] = self._extract_signal_complexity_features(audio)
+        
+        # Clean up NaNs/Infs in all feature vectors
+        for key, vector in features.items():
+            features[key] = np.nan_to_num(vector, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
 
-        if self.expected_dim is None:
-            # First call establishes the reference length
-            self.expected_dim = len(final_features)
-        if len(final_features) < self.expected_dim:
-            pad = np.zeros(self.expected_dim - len(final_features), dtype=final_features.dtype)
-            final_features = np.concatenate([final_features, pad])
-        elif len(final_features) > self.expected_dim:
-            final_features = final_features[: self.expected_dim]
-
-        return final_features.astype(np.float32)
-
+        return features
 
     def _extract_mfcc_features(self, audio: np.ndarray) -> np.ndarray:
+        # Returns a vector of shape (78,)
         mfcc_feat = mfcc(audio, self.sample_rate, numcep=13, nfilt=26, nfft=512)
         delta_feat = delta(mfcc_feat, N=2)
         delta_delta_feat = delta(delta_feat, N=2)
@@ -88,6 +87,7 @@ class AudioFeatureExtractor:
         return np.concatenate([np.mean(all_features, axis=0), np.std(all_features, axis=0)])
 
     def _extract_prosodic_features(self, audio: np.ndarray) -> np.ndarray:
+        # Returns a vector of shape (6,)
         features = []
         try:
             sound = parselmouth.Sound(audio, sampling_frequency=self.sample_rate)
@@ -117,30 +117,36 @@ class AudioFeatureExtractor:
         features.extend([silence_ratio, 1.0 - silence_ratio])
         return np.array(features)
 
-    def _extract_neural_embeddings(self, audio: np.ndarray) -> np.ndarray:
-        embeddings = []
+    def _extract_neural_embeddings(self, audio: np.ndarray) -> dict[str, np.ndarray]:
+        # --- MODIFIED ---
+        # Returns a dictionary of separate neural embeddings
+        embeddings = {}
         with torch.no_grad():
             if self.whisper_model:
                 inputs = self.whisper_processor(audio, sampling_rate=self.sample_rate, return_tensors="pt").to(self.device)
                 encoder_outputs = self.whisper_model.model.encoder(**inputs)
-                embeddings.append(encoder_outputs.last_hidden_state.mean(dim=1).squeeze().cpu().numpy())
-            else: embeddings.append(np.zeros(512))
+                embeddings['neural_whisper'] = encoder_outputs.last_hidden_state.mean(dim=1).squeeze().cpu().numpy()
+            else: 
+                embeddings['neural_whisper'] = np.zeros(512)
 
             if self.wav2vec2_model:
                 inputs = self.wav2vec2_processor(audio, sampling_rate=self.sample_rate, return_tensors="pt").to(self.device)
                 outputs = self.wav2vec2_model.wav2vec2(**inputs)
-                embeddings.append(outputs.last_hidden_state.mean(dim=1).squeeze().cpu().numpy())
-            else: embeddings.append(np.zeros(768))
+                embeddings['neural_w2v2'] = outputs.last_hidden_state.mean(dim=1).squeeze().cpu().numpy()
+            else: 
+                embeddings['neural_w2v2'] = np.zeros(768)
 
             if self.hubert_model:
                 inputs = torch.tensor(audio, dtype=torch.float32, device=self.device).unsqueeze(0)
                 outputs = self.hubert_model(inputs)
-                embeddings.append(outputs.last_hidden_state.mean(dim=1).squeeze().cpu().numpy())
-            else: embeddings.append(np.zeros(768))
+                embeddings['neural_hubert'] = outputs.last_hidden_state.mean(dim=1).squeeze().cpu().numpy()
+            else: 
+                embeddings['neural_hubert'] = np.zeros(768)
 
-        return np.concatenate(embeddings) if embeddings else np.zeros(2048)
+        return embeddings
 
     def _extract_signal_complexity_features(self, audio: np.ndarray) -> np.ndarray:
+        # Returns a vector of shape (11,)
         features = []
         try:
             frame_energy = librosa.feature.rms(y=audio)[0]
