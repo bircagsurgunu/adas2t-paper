@@ -3,6 +3,8 @@
 import argparse
 import torch
 import logging
+import os
+import shutil  # Import shutil for directory operations
 
 from main.adas2t.trainer import ADAS2TTrainer
 
@@ -20,8 +22,8 @@ TRAINING_DATASETS_INFO = [
     ("openslr/librispeech_asr", {"split": "train.clean.100", "field": "text"}),
     ("edinburghcstr/ami", {"split": "train", "config": "ihm", "field": "text"}),
     # To train on more data, uncomment the following lines.
-    # ("distil-whisper/earnings22", {"split": "train", "field": "transcription", "lang_config": "chunked"}),
-    # ("google/fleurs", {"split": "train", "field": "transcription", "lang_config": "en_us"}),
+    #("distil-whisper/earnings22", {"split": "train", "field": "transcription", "lang_config": "chunked"}),
+    #("google/fleurs", {"split": "train", "field": "transcription", "lang_config": "en_us"}),
 ]
 
 
@@ -29,7 +31,14 @@ def main():
     """
     Main function to run the ADAS2T meta-learner training pipeline.
     """
-    parser = argparse.ArgumentParser(description="Train the ADAS2T XGBoost Meta-Learner.")
+    parser = argparse.ArgumentParser(description="Train the ADAS2T Meta-Learner.")
+    parser.add_argument(
+        "--learner_type",
+        type=str,
+        default="xgboost",
+        choices=["xgboost", "mlp"],
+        help="Type of meta-learner model to train."
+    )
     parser.add_argument(
         "--num_samples_per_dataset",
         type=int,
@@ -44,8 +53,8 @@ def main():
     parser.add_argument(
         "--model_path",
         type=str,
-        default="adas2t_model.json",
-        help="Path to save the trained XGBoost model."
+        default=None,
+        help="Path to save the trained model. Defaults to 'adas2t_model_xgboost.json' or 'adas2t_model_mlp.pth'."
     )
     parser.add_argument(
         "--scaler_path",
@@ -59,39 +68,91 @@ def main():
         default="adas2t_algorithms.pkl",
         help="Path to save the list of algorithm names."
     )
-    parser.add_argument("--xgb_max_depth",  type=int, default=10)
-    parser.add_argument("--xgb_num_trees",  type=int, default=2000)
-    parser.add_argument("--xgb_eta",        type=float, default=0.05)
+
+    # --- Caching Arguments ---
+    parser.add_argument(
+        "--cache_dir",
+        type=str,
+        default=".adas2t_cache",
+        help="Directory to store cached features and transcriptions to speed up subsequent runs."
+    )
+    parser.add_argument(
+        '--clear_cache',
+        action='store_true',
+        help="If set, deletes the cache directory before starting, forcing data regeneration."
+    )
+
+    # --- XGBoost Specific Arguments ---
+    parser.add_argument("--xgb_max_depth", type=int, default=10, help="Max depth for XGBoost trees.")
+    parser.add_argument("--xgb_num_trees", type=int, default=2000, help="Number of boosting rounds for XGBoost.")
+    parser.add_argument("--xgb_eta", type=float, default=0.05, help="Learning rate (eta) for XGBoost.")
+
+    # --- MLP Specific Arguments ---
+    parser.add_argument("--mlp_epochs", type=int, default=50, help="Number of training epochs for MLP.")
+    parser.add_argument("--mlp_lr", type=float, default=1e-4, help="Learning rate for MLP optimizer.")
+    parser.add_argument("--mlp_hidden_dim", type=int, default=256, help="Hidden layer dimension for MLP.")
+    parser.add_argument("--mlp_num_layers", type=int, default=3, help="Number of hidden layers for MLP.")
+    parser.add_argument("--mlp_batch_size", type=int, default=256, help="Batch size for MLP training.")
+    parser.add_argument("--mlp_dropout", type=float, default=0.20, help="Drop-out probability for each MLP layer.")
+    parser.add_argument(
+    "--early_stop_patience",
+    type=int,
+    default=10,
+    help="How many epochs to wait for an improvement in validation loss before early stopping.",
+    )
+    parser.add_argument(
+        "--mlp_weight_decay",
+        type=float,
+         default=0.0,
+         help="L2 weight-decay value (passed to the Adam optimizer).",)
     args = parser.parse_args()
 
-    print("--- Starting ADAS2T Meta-Learner Training ---")
+    # Handle cache clearing
+    if args.clear_cache and os.path.exists(args.cache_dir):
+        logging.warning(f"Clearing cache directory: {args.cache_dir}")
+        shutil.rmtree(args.cache_dir)
+
+    # Set default model path if not provided by the user
+    if args.model_path is None:
+        file_extension = "json" if args.learner_type == "xgboost" else "pth"
+        args.model_path = f"adas2t_model_{args.learner_type}.{file_extension}"
+
+    print(f"--- Starting ADAS2T Meta-Learner Training (Learner: {args.learner_type.upper()}) ---")
     
-    # Determine which datasets to use for this training run
     datasets_to_use = TRAINING_DATASETS_INFO if args.use_all_datasets else [TRAINING_DATASETS_INFO[0]]
 
-    # Dynamic configuration based on argparse and system capabilities
     training_config = {
+        'learner_type': args.learner_type,
         'device': "cuda:0" if torch.cuda.is_available() else "cpu",
         'torch_dtype': torch.float16 if torch.cuda.is_available() else torch.float32,
         'num_training_samples': args.num_samples_per_dataset,
-        'training_datasets': datasets_to_use,  # Pass the list of datasets
+        'training_datasets': datasets_to_use,
         
-        # The pool of models the meta-learner will be trained to choose from.
-        # This should match the pool used at inference time.
         'algorithm_pool_models': [
             "facebook/hubert-large-ls960-ft",
             "facebook/wav2vec2-base-960h",
             "nvidia/parakeet-tdt-0.6b-v2",
         ],
 
-        # Output paths for the trained artifacts
         'model_path': args.model_path,
         'scaler_path': args.scaler_path,
         'algorithms_path': args.algorithms_path,
+        'cache_dir': args.cache_dir, # Add cache directory to config
+
         "xgb_params": {
             "max_depth" : args.xgb_max_depth,
             "num_boost" : args.xgb_num_trees,
             "eta"       : args.xgb_eta,
+        },
+        "mlp_params": {
+            "epochs": args.mlp_epochs,
+            "lr": args.mlp_lr,
+            "hidden_dim": args.mlp_hidden_dim,
+            "num_layers": args.mlp_num_layers,
+            "batch_size": args.mlp_batch_size,
+            "dropout": args.mlp_dropout,
+            "early_stop_patience": args.early_stop_patience,
+            "weight_decay": args.mlp_weight_decay,
         }
     }
 
@@ -111,6 +172,7 @@ def main():
     print(f"Scaler saved to: {args.scaler_path}")
     print(f"Algorithms list saved to: {args.algorithms_path}")
     print("You can now run the main benchmark with 'adas2t-meta-learner' in MODELS_TO_BENCHMARK.")
+    print(f"Ensure 'ADAS2T_MODEL_PATH' in config.py is set to '{os.path.basename(args.model_path)}'.")
 
 if __name__ == "__main__":
     main()

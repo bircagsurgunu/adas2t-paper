@@ -34,6 +34,7 @@ class AudioFeatureExtractor:
         self.device = device
         self.vad = webrtcvad.Vad(3)  # Aggressiveness level 3
         self._load_embedding_models()
+        self.expected_dim = None
         
     def _load_embedding_models(self):
         """Load pre-trained models for neural embeddings"""
@@ -62,13 +63,22 @@ class AudioFeatureExtractor:
         # Signal complexity features (~10 features)
         signal_features = self._extract_signal_complexity_features(audio)
         
-        final_features = np.concatenate([
-            mfcc_features,
-            prosodic_features,
-            neural_features,
-            signal_features
-        ])
-        return np.nan_to_num(final_features, nan=0.0, posinf=0.0, neginf=0.0)
+        final_features = np.concatenate(
+            [mfcc_features, prosodic_features, neural_features, signal_features]
+        )
+        final_features = np.nan_to_num(final_features, nan=0.0, posinf=0.0, neginf=0.0)
+
+        if self.expected_dim is None:
+            # First call establishes the reference length
+            self.expected_dim = len(final_features)
+        if len(final_features) < self.expected_dim:
+            pad = np.zeros(self.expected_dim - len(final_features), dtype=final_features.dtype)
+            final_features = np.concatenate([final_features, pad])
+        elif len(final_features) > self.expected_dim:
+            final_features = final_features[: self.expected_dim]
+
+        return final_features.astype(np.float32)
+
 
     def _extract_mfcc_features(self, audio: np.ndarray) -> np.ndarray:
         mfcc_feat = mfcc(audio, self.sample_rate, numcep=13, nfilt=26, nfft=512)
